@@ -54,6 +54,34 @@ template<class T> void adjustSamples(qreal factor, const void *src, void *dst, i
         pDst[i] = pSrc[i] * factor;
 }
 
+static quint32 getSample24(const quint8 *src, size_t pos)
+{
+    return src[3 * pos]
+         | src[3 * pos + 1] << 8
+         | src[3 * pos + 2] << 16;
+}
+
+static void setSample24(quint8* dest, size_t pos, quint32 sample)
+{
+    dest[3 * pos]     = sample         & 0xff;
+    dest[3 * pos + 1] = (sample >>  8) & 0xff;
+    dest[3 * pos + 2] = (sample >> 16) & 0xff;
+}
+
+void adjustSignedSamples24(qreal factor, const void *src, void *dst, int samples)
+{
+    const quint8 *pSrc = (const quint8 *)src;
+    quint8 *pDst = (quint8*)dst;
+
+    for (int i = 0; i < samples; i++) {
+        quint32 sample = getSample24(pSrc, i);
+        if (sample  &  0x800000)
+            sample |= ~0xffffff;
+        sample = static_cast<quint32>(static_cast<qint32>(sample) * factor);
+        setSample24(pDst, i, sample);
+    }
+}
+
 // Unsigned samples are biased around 0x80/0x8000 :/
 // This makes a pure template solution a bit unwieldy but possible
 template<class T> struct signedVersion {};
@@ -84,6 +112,19 @@ template<class T> void adjustUnsignedSamples(qreal factor, const void *src, void
     }
 }
 
+void adjustUnsignedSamples24(qreal factor, const void *src, void *dst, int samples)
+{
+    const quint8 *pSrc = (const quint8 *)src;
+    quint8 *pDst = (quint8*)dst;
+
+    for (int i = 0; i < samples; i++) {
+        quint32 sample = getSample24(pSrc, i);
+        sample = (quint32)(0x800000 + ((qint32)(sample - 0x800000) * factor));
+
+        setSample24(pDst, i, sample);
+    }
+}
+
 void qMultiplySamples(qreal factor, const QAudioFormat &format, const void* src, void* dest, int len)
 {
     int samplesCount = len / (format.sampleSize()/8);
@@ -100,6 +141,12 @@ void qMultiplySamples(qreal factor, const QAudioFormat &format, const void* src,
             QAudioHelperInternal::adjustSamples<qint16>(factor,src,dest,samplesCount);
         else if (format.sampleType() == QAudioFormat::UnSignedInt)
             QAudioHelperInternal::adjustUnsignedSamples<quint16>(factor,src,dest,samplesCount);
+        break;
+    case 24:
+        if (format.sampleType() == QAudioFormat::SignedInt)
+            QAudioHelperInternal::adjustSignedSamples24(factor,src,dest,samplesCount);
+        else if (format.sampleType() == QAudioFormat::UnSignedInt)
+            QAudioHelperInternal::adjustUnsignedSamples24(factor,src,dest,samplesCount);
         break;
     default:
         if (format.sampleType() == QAudioFormat::SignedInt)
